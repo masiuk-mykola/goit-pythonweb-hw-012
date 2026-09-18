@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8" />
+    <title>Підтвердження електронної адреси</title>
+  </head>
+  <body style="font-family: Arial, sans-serif; color: #222">
+    <h2>Вітаємо, {{ username }}!</h2>
+    <p>Дякуємо за реєстрацію в Phonebook API.</p>
+    <p>Щоб підтвердити електронну адресу, перейдіть за посиланням:</p>
+    <p>
+      <a
+        href="{{ verify_url }}"
+        style="display: inline-block; padding: 10px 18px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 4px"
+        >Підтвердити email</a
+      >
+    </p>
+    <p style="font-size: 12px; color: #666">
+      Якщо кнопка не працює, скопіюйте посилання: {{ verify_url }}
+    </p>
+  </body>
+</html>
