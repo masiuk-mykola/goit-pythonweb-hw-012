@@ -1,3 +1,5 @@
+"""FastAPI application entry point: middleware, error handlers and routers."""
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -22,6 +24,7 @@ app.add_middleware(
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Return 429 with a readable message when a rate limit is exceeded."""
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={"error": "Перевищено ліміт запитів. Спробуйте пізніше."},

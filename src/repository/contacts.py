@@ -1,3 +1,5 @@
+"""Data access layer for contacts."""
+
 from datetime import date, timedelta
 
 from sqlalchemy import Integer, and_, cast, extract, func, select, tuple_
@@ -8,6 +10,12 @@ from src.schemas import ContactModel
 
 
 class ContactRepository:
+    """CRUD operations on the ``contacts`` table, always scoped to one owner.
+
+    Args:
+        session: Async SQLAlchemy session used for all queries.
+    """
+
     def __init__(self, session: AsyncSession):
         self.db = session
 
@@ -21,6 +29,23 @@ class ContactRepository:
         skip: int = 0,
         limit: int = 100,
     ) -> list[Contact]:
+        """List the user's contacts with optional filters and pagination.
+
+        Filters are combined with AND; string filters are case-insensitive.
+
+        Args:
+            user: Owner of the contacts.
+            contact_first_name: Exact first name to match.
+            contact_last_name: Exact last name to match.
+            contact_email: Exact email to match.
+            days_to_birthday: Only contacts whose birthday falls within the
+                next N days, today included.
+            skip: Number of records to skip.
+            limit: Maximum number of records to return.
+
+        Returns:
+            list[Contact]: Matching contacts.
+        """
         conditions = [Contact.user_id == user.id]
         if contact_first_name:
             conditions.append(
@@ -53,11 +78,30 @@ class ContactRepository:
         return list(contacts.scalars().all())
 
     async def get_contact_by_id(self, contact_id: int, user: User) -> Contact | None:
+        """Get one of the user's contacts by ID.
+
+        Args:
+            contact_id: Contact ID.
+            user: Owner of the contact.
+
+        Returns:
+            Contact | None: The contact, or ``None`` if not found or owned by
+            someone else.
+        """
         stmt = select(Contact).filter_by(id=contact_id, user_id=user.id)
         contact = await self.db.execute(stmt)
         return contact.scalar_one_or_none()
 
     async def create_contact(self, body: ContactModel, user: User) -> Contact:
+        """Create a contact for the user.
+
+        Args:
+            body: Contact data.
+            user: Owner of the new contact.
+
+        Returns:
+            Contact: The created contact.
+        """
         contact = Contact(**body.model_dump(exclude_unset=True), user_id=user.id)
         self.db.add(contact)
         await self.db.commit()
@@ -67,6 +111,16 @@ class ContactRepository:
     async def update_contact(
         self, contact_id: int, body: ContactModel, user: User
     ) -> Contact | None:
+        """Update one of the user's contacts.
+
+        Args:
+            contact_id: Contact ID.
+            body: New contact data.
+            user: Owner of the contact.
+
+        Returns:
+            Contact | None: The updated contact, or ``None`` if not found.
+        """
         contact = await self.get_contact_by_id(contact_id, user)
         if not contact:
             return None
@@ -81,6 +135,15 @@ class ContactRepository:
         return contact
 
     async def remove_contact(self, contact_id: int, user: User) -> Contact | None:
+        """Delete one of the user's contacts.
+
+        Args:
+            contact_id: Contact ID.
+            user: Owner of the contact.
+
+        Returns:
+            Contact | None: The deleted contact, or ``None`` if not found.
+        """
         contact = await self.get_contact_by_id(contact_id, user)
         if contact:
             await self.db.delete(contact)
@@ -90,6 +153,15 @@ class ContactRepository:
     async def get_contacts_by_ids(
         self, contact_id: list[int], user: User
     ) -> list[Contact]:
+        """Get the user's contacts with the given IDs.
+
+        Args:
+            contact_id: List of contact IDs.
+            user: Owner of the contacts.
+
+        Returns:
+            list[Contact]: Found contacts (missing IDs are skipped).
+        """
         stmt = select(Contact).where(
             Contact.id.in_(contact_id), Contact.user_id == user.id
         )
@@ -101,6 +173,15 @@ class ContactRepository:
         first_name: str,
         user: User,
     ) -> Contact | None:
+        """Get the user's contact by first name.
+
+        Args:
+            first_name: First name (lower-cased before matching).
+            user: Owner of the contact.
+
+        Returns:
+            Contact | None: The contact, or ``None`` if not found.
+        """
         stmt = select(Contact).filter_by(
             first_name=first_name.lower(), user_id=user.id
         )

@@ -3,10 +3,20 @@
 Асинхронний REST API для керування телефонною книгою. Проєкт побудований на
 FastAPI та SQLAlchemy і використовує PostgreSQL як базу даних.
 
+**Демо (Oracle Cloud):**
+[Swagger UI](http://130.162.232.77/docs) ·
+[ReDoc](http://130.162.232.77/redoc) ·
+[health-check](http://130.162.232.77/api/healthchecker)
+
 ## Можливості
 
 - реєстрація користувачів із хешуванням паролів (Argon2);
-- аутентифікація та авторизація через JWT (`access_token`);
+- аутентифікація через пару JWT-токенів `access_token` + `refresh_token`
+  (ротація refresh-токена, вихід із системи);
+- ролі користувачів `user` / `admin`: змінювати аватар можуть лише адміністратори;
+- кешування поточного користувача в Redis — `get_current_user` не звертається
+  до бази даних на кожен запит;
+- скидання пароля через одноразовий токен, надісланий на email;
 - верифікація електронної пошти користувача;
 - кожен користувач бачить і змінює лише власні контакти;
 - обмеження кількості запитів до `/api/users/me` (10 на хвилину);
@@ -17,7 +27,9 @@ FastAPI та SQLAlchemy і використовує PostgreSQL як базу д�
 - вибірка контактів із днями народження в найближчі N днів;
 - пагінація списку контактів через `skip` і `limit`;
 - перевірка доступності бази даних через health-check;
-- автоматична документація API у Swagger UI та ReDoc.
+- автоматична документація API у Swagger UI та ReDoc;
+- документація коду, згенерована Sphinx із docstrings;
+- модульні та інтеграційні тести (pytest), покриття понад 75% (pytest-cov).
 
 ## Вимоги
 
@@ -35,8 +47,8 @@ FastAPI та SQLAlchemy і використовує PostgreSQL як базу д�
 ### Крок 1. Отримайте код
 
 ```bash
-git clone <url-репозиторію> goit-pythonweb-hw-10
-cd goit-pythonweb-hw-10
+git clone <url-репозиторію> goit-pythonweb-hw-12
+cd goit-pythonweb-hw-12
 ```
 
 ### Крок 2. Створіть файл `.env`
@@ -67,8 +79,8 @@ cp .env.example .env
 - `APP_BASE_URL` — адреса API, з якої формується посилання в листі
   верифікації.
 
-> Під час запуску в Docker `DB_URL` та `MAIL_SERVER` автоматично
-> перевизначаються в `docker-compose.yml` (хости `db` і `mailpit`), тож
+> Під час запуску в Docker `DB_URL`, `REDIS_URL` та `MAIL_SERVER` автоматично
+> перевизначаються в `docker-compose.yml` (хости `db`, `redis` і `mailpit`), тож
 > змінювати їх для Docker не потрібно.
 
 ### Крок 3. Запустіть сервіси
@@ -89,12 +101,13 @@ app-1  | INFO:     Uvicorn running on http://0.0.0.0:8000
 
 Щоб запустити у фоні, додайте `-d`: `docker compose up --build -d`.
 
-Будуть запущені три сервіси:
+Будуть запущені чотири сервіси:
 
 | Сервіс    | Адреса                  | Опис                                      |
 | --------- | ----------------------- | ----------------------------------------- |
 | `app`     | `http://localhost:8000` | API (міграції застосовуються автоматично) |
 | `db`      | `localhost:5432`        | PostgreSQL                                |
+| `redis`   | `localhost:6379`        | Redis (кеш поточного користувача)         |
 | `mailpit` | `http://localhost:8025` | Вебінтерфейс для перегляду листів         |
 
 ### Крок 4. Перевірте, що все працює
@@ -147,13 +160,13 @@ curl http://localhost:8000/api/healthchecker
 Docker, а застосунок запустити локально з автоперезавантаженням:
 
 ```bash
-docker compose up -d db mailpit   # або власні PostgreSQL та SMTP
+docker compose up -d db redis mailpit   # або власні PostgreSQL, Redis та SMTP
 uv sync
 uv run alembic upgrade head
 uv run uvicorn main:app --reload
 ```
 
-У цьому режимі використовуються `DB_URL` і `MAIL_SERVER=localhost` з `.env`.
+У цьому режимі використовуються `DB_URL`, `REDIS_URL` і `MAIL_SERVER=localhost` з `.env`.
 Якщо контейнер `app` уже запущений, спершу зупиніть його
 (`docker compose stop app`), щоб звільнити порт 8000.
 
@@ -163,11 +176,42 @@ uv run uvicorn main:app --reload
 2. Відкрийте лист у Mailpit (`http://localhost:8025`) і перейдіть за
    посиланням підтвердження.
 3. Увійдіть: `POST /api/auth/login` (form-data `username` і `password`) —
-   у відповідь прийде `access_token`.
+   у відповідь прийдуть `access_token` (1 година) і `refresh_token` (7 днів).
 4. Передавайте токен у заголовку `Authorization: Bearer <access_token>`.
    У Swagger UI натисніть **Authorize** і введіть ім'я користувача та пароль.
+5. Коли `access_token` сплив, надішліть `POST /api/auth/refresh_token` з
+   `{"refresh_token": "..."}` — отримаєте нову пару. Старий refresh-токен після
+   цього перестає діяти. `POST /api/auth/logout` відкликає refresh-токен.
 
 Без підтвердженої електронної адреси увійти неможливо.
+
+### Кешування
+
+Після першого запиту з токеном користувач зберігається в Redis під ключем
+`user:<username>` на `USER_CACHE_TTL_SECONDS` (15 хв). Наступні запити беруть
+його з кешу, а не з БД. Кеш очищується при зміні аватара, підтвердженні email,
+скиданні пароля та виході. Хеш пароля та refresh-токен у кеш не потрапляють.
+Якщо Redis недоступний, застосунок працює далі, читаючи користувача з БД.
+
+### Ролі
+
+Нові користувачі отримують роль `user`. Змінювати аватар
+(`PATCH /api/users/avatar`) може лише `admin`, для інших маршрут повертає 403.
+Призначити адміністратора:
+
+```bash
+docker compose exec db psql -U postgres -d phonebook \
+   -c "UPDATE users SET role='admin' WHERE email='ada@example.com'"
+docker compose exec redis redis-cli DEL user:ada   # скинути кеш одразу
+```
+
+### Скидання пароля
+
+1. `POST /api/auth/request_password_reset` з `{"email": "..."}`. Відповідь
+   однакова незалежно від того, чи існує такий email (не більше 5 запитів/хв).
+2. У листі (Mailpit) буде токен. Він дійсний 1 годину і лише один раз.
+3. `POST /api/auth/reset_password` з `{"token": "...", "new_password": "..."}`.
+   Після зміни пароля попередній refresh-токен відкликається.
 
 ## API
 
@@ -182,7 +226,11 @@ GET /api/healthchecker
 | Метод  | Endpoint                          | Опис                                     |
 | ------ | --------------------------------- | ---------------------------------------- |
 | `POST` | `/api/auth/register`              | Реєстрація (201; 409, якщо email або ім'я зайняті) |
-| `POST` | `/api/auth/login`                 | Отримати `access_token` (201; 401 при невірних даних) |
+| `POST` | `/api/auth/login`                 | Отримати `access_token` і `refresh_token` (201; 401 при невірних даних) |
+| `POST` | `/api/auth/refresh_token`         | Обміняти refresh-токен на нову пару (401, якщо недійсний) |
+| `POST` | `/api/auth/logout`                | Відкликати refresh-токен (204, потрібна авторизація) |
+| `POST` | `/api/auth/request_password_reset` | Надіслати токен скидання пароля (202)  |
+| `POST` | `/api/auth/reset_password`        | Встановити новий пароль за токеном (400, якщо токен недійсний) |
 | `GET`  | `/api/auth/confirmed_email/{token}` | Підтвердити електронну адресу          |
 | `POST` | `/api/auth/request_email`         | Повторно надіслати лист підтвердження    |
 
@@ -208,7 +256,7 @@ curl -X POST "http://localhost:8000/api/auth/login" \
 | Метод   | Endpoint            | Опис                                        |
 | ------- | ------------------- | ------------------------------------------- |
 | `GET`   | `/api/users/me`     | Поточний користувач (не більше 10 запитів/хв, далі 429) |
-| `PATCH` | `/api/users/avatar` | Завантажити аватар (multipart, поле `file`) |
+| `PATCH` | `/api/users/avatar` | Завантажити аватар (лише `admin`; multipart, поле `file`) |
 
 ```bash
 curl -X PATCH "http://localhost:8000/api/users/avatar" \
@@ -292,3 +340,74 @@ uv run alembic revision --autogenerate -m "опис змін"
 ```bash
 uv run alembic downgrade -1
 ```
+
+## Тести
+
+Тести використовують SQLite у пам'яті (aiosqlite) та fakeredis, тож Docker
+для них не потрібен:
+
+```bash
+uv sync
+uv run pytest --cov=src --cov-report=term-missing
+```
+
+- `tests/unit` — модульні тести репозиторіїв і сервісів (auth, кеш, email, upload);
+- `tests/integration` — інтеграційні тести всіх маршрутів через `httpx.AsyncClient`.
+
+Мінімальне покриття (75%) задане в `pyproject.toml`: якщо воно впаде нижче,
+команда завершиться помилкою. HTML-звіт: `uv run pytest --cov=src --cov-report=html`
+(відкрийте `htmlcov/index.html`).
+
+## Документація коду (Sphinx)
+
+```bash
+uv run make -C docs html      # або: uv run sphinx-build -M html docs docs/_build
+open docs/_build/html/index.html
+```
+
+Документація генерується з docstrings модулів `src/` (Google-стиль, `sphinx.ext.napoleon`).
+
+## Розгортання (Oracle Cloud Always Free)
+
+Застосунок розгорнуто на VM Oracle Cloud (VM.Standard.E2.1.Micro, 1 GB RAM,
+Ubuntu 22.04): `http://130.162.232.77/docs`.
+
+Для малої VM є override `docker-compose.prod.yml`: назовні відкритий лише порт
+80 (застосунок), PostgreSQL/Redis доступні тільки в docker-мережі, для всіх
+контейнерів задані ліміти пам'яті.
+
+1. Підготуйте VM (одноразово):
+
+   ```bash
+   # swap на 2 GB — 1 GB RAM замало для збірки та всіх сервісів
+   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+   sudo mkswap /swapfile && sudo swapon /swapfile
+   echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+   # Docker Engine + Compose
+   curl -fsSL https://get.docker.com | sudo sh
+   # відкрити порт 80 у фаєрволі VM
+   sudo iptables -I INPUT 5 -p tcp -m state --state NEW --dport 80 -j ACCEPT
+   sudo apt-get install -y iptables-persistent && sudo netfilter-persistent save
+   ```
+
+   В OCI Console: **Networking → Virtual Cloud Networks → VCN → Security Lists →
+   Default Security List → Add Ingress Rules**: Source CIDR `0.0.0.0/0`,
+   IP Protocol TCP, Destination Port `80`.
+
+2. Скопіюйте код і створіть `.env` на сервері (`APP_BASE_URL=http://<IP>`,
+   `CORS_ORIGINS=["http://<IP>"]`, згенеровані `JWT_SECRET` і `POSTGRES_PASSWORD`):
+
+   ```bash
+   rsync -az --exclude .venv --exclude .git --exclude .env \
+      ./ ubuntu@<IP>:~/goit-pythonweb-hw-12/
+   ```
+
+3. Запустіть:
+
+   ```bash
+   cd ~/goit-pythonweb-hw-12
+   sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+   ```
+
+4. Листи (Mailpit) переглядайте через SSH-тунель:
+   `ssh -L 8025:localhost:8025 ubuntu@<IP>`, потім `http://localhost:8025`.

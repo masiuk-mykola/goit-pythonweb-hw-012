@@ -1,3 +1,5 @@
+"""Contact CRUD routes. Every route works only with the current user's contacts."""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +34,7 @@ async def read_contacts(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """List contacts with optional filters and pagination."""
     contact_service = ContactService(db)
     contacts = await contact_service.get_contacts(
         user=user,
@@ -51,6 +54,11 @@ async def read_contact(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Get a contact by ID.
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
     contact_service = ContactService(db)
     contact = await contact_service.get_contact(contact_id, user)
     if contact is None:
@@ -66,6 +74,7 @@ async def create_contact(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Create a new contact."""
     contact_service = ContactService(db)
     return await contact_service.create_contact(body, user)
 
@@ -77,6 +86,11 @@ async def update_contact(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Replace a contact's data.
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
     contact_service = ContactService(db)
     contact = await contact_service.update_contact(contact_id, body, user)
     if contact is None:
@@ -92,6 +106,11 @@ async def remove_contact(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Delete a contact and return it.
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
     contact_service = ContactService(db)
     contact = await contact_service.remove_contact(contact_id, user)
     if contact is None:

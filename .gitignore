@@ -25,3 +25,9 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Docs
+docs/_build/
+
+# Tests
+test.db

@@ -1,3 +1,5 @@
+"""Transactional emails (verification and password reset) via ``fastapi-mail``."""
+
 import logging
 from pathlib import Path
 
@@ -24,7 +26,22 @@ conf = ConnectionConfig(
 )
 
 
+async def _send(message: MessageSchema, template_name: str, email: str) -> None:
+    try:
+        await FastMail(conf).send_message(message, template_name=template_name)
+    except ConnectionErrors as err:
+        logger.error("Failed to send %s to %s: %s", template_name, email, err)
+
+
 async def send_verification_email(email: str, username: str) -> None:
+    """Send an email with a link that confirms the address.
+
+    SMTP errors are logged and swallowed: the function runs as a background task.
+
+    Args:
+        email: Recipient address.
+        username: Name used in the greeting.
+    """
     token = create_email_token({"sub": email})
     message = MessageSchema(
         subject="Підтвердіть вашу електронну адресу",
@@ -35,7 +52,28 @@ async def send_verification_email(email: str, username: str) -> None:
         },
         subtype=MessageType.html,
     )
-    try:
-        await FastMail(conf).send_message(message, template_name="verify_email.html")
-    except ConnectionErrors as err:
-        logger.error("Failed to send verification email to %s: %s", email, err)
+    await _send(message, "verify_email.html", email)
+
+
+async def send_reset_password_email(email: str, username: str, token: str) -> None:
+    """Send an email with a single-use password reset token.
+
+    SMTP errors are logged and swallowed: the function runs as a background task.
+
+    Args:
+        email: Recipient address.
+        username: Name used in the greeting.
+        token: Reset token created by :func:`src.services.auth.create_reset_token`.
+    """
+    message = MessageSchema(
+        subject="Скидання пароля",
+        recipients=[email],
+        template_body={
+            "username": username,
+            "token": token,
+            "reset_url": f"{config.APP_BASE_URL}/api/auth/reset_password",
+            "expires_minutes": config.RESET_TOKEN_EXPIRATION_SECONDS // 60,
+        },
+        subtype=MessageType.html,
+    )
+    await _send(message, "reset_password.html", email)

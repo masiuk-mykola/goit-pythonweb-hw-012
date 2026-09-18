@@ -1,0 +1,24 @@
+# Продакшн-override для невеликої VM (Oracle Always Free, 1 GB RAM):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Назовні відкритий лише застосунок на порту 80; БД, Redis і Mailpit доступні
+# тільки всередині docker-мережі (UI Mailpit — через SSH-тунель на 127.0.0.1:8025).
+services:
+  db:
+    ports: !reset []
+    command: postgres -c shared_buffers=64MB -c max_connections=30
+    mem_limit: 256m
+
+  redis:
+    ports: !reset []
+    command: redis-server --maxmemory 48mb --maxmemory-policy allkeys-lru --save ""
+    mem_limit: 96m
+
+  mailpit:
+    ports: !override
+      - "127.0.0.1:8025:8025"
+    mem_limit: 64m
+
+  app:
+    ports: !override
+      - "80:8000"
+    mem_limit: 320m
